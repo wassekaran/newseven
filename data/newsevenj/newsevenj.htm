@@ -1,0 +1,693 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">
+<HTML>
+<head><TITLE>JavaScript New Seven Puzzle</TITLE>
+
+<script language="JavaScript" type="text/javascript">
+<!--
+/*---- check browser version ------*/
+var netscape = (document.layers) ? 1:0;
+var goodIE = (document.all) ? 1:0;
+var mozilla = (netscape==0 && goodIE==0 && document.getElementById) ? 1: 0;
+if (netscape) {
+	window.captureEvents(Event.MOUSEDOWN);
+	window.onMouseDown = mouseclick;
+}else if (goodIE||mozilla) {
+	document.onmousedown=mouseclick;
+}
+
+if (document.addEventListener)
+   document.addEventListener("keypress",keypress,false);
+else if (document.attachEvent)
+   document.attachEvent("onkeypress", keypress);
+else
+   document.onkeypress= keypress;
+
+
+
+/*---- pre-load images ------*/
+var imagedir = "images/buttons/";
+function preload(){
+	this.length=preload.arguments.length;
+	for (var i=0;i<this.length;i++){
+		this[i]=new Image();
+		this[i].src=imagedir+preload.arguments[i];
+	}
+}
+var pics=new preload(
+			"edit.gif", "edit2.gif",
+			"solve.gif","solve2.gif",
+			"play.gif", "pause.gif" );
+
+/*--------Cross-platform layer manipulations------------*/
+function placelayer(lay,x,y){
+	if(netscape){
+		eval("document."+lay+".moveTo("+x+","+y+");");
+	}else if(goodIE){
+		document.all[lay].style.pixelLeft=x;
+		document.all[lay].style.pixelTop=y;
+	}else{
+		document.getElementById(lay).style.left=x;
+		document.getElementById(lay).style.top=y;
+	}
+}
+
+function hidelayer(lay){
+	if(netscape){
+		eval("document."+lay+".visibility='hidden';");
+	}else if(goodIE){
+		document.all[lay].style.visibility='hidden';
+	}else{
+		document.getElementById(lay).style.visibility='hidden';
+	}
+}
+function showlayer(lay){
+	if(netscape){
+		eval("document."+lay+".visibility='visible';");
+	}else if(goodIE){
+		document.all[lay].style.visibility='visible';
+	}else{
+		document.getElementById(lay).style.visibility='visible';
+	}
+}
+function changeimage(lay,im,nw){
+	if(netscape){
+		document.layers[lay].document.images[im].src=nw;
+	}else{
+		eval("document.images."+im+".src=nw");
+	}
+}
+
+function setZindex(lay,z){
+	if(netscape){
+		eval("document."+lay+".zIndex="+z+";");
+	}else if(goodIE){
+		document.all[lay].style.zIndex=z;
+	}else{
+		document.getElementById(lay).style.zIndex=z;
+	}
+}
+/*--------------------*/
+
+
+var offsetx = 23, offsety = 20;   // display offset
+
+var mode = 0;  //0=normal  1=solving mixed,  2=edit,  3=solving,  4=playback
+var level = 0; //0=9 pieces, 1=8 pieces, 2=7 pieces
+var locked=false;  //set if a move is in progress, blocking all controls.
+var edt=-1	  // picked-up piece in edit mode
+var tileWidth = 75;  // width of tiless.
+var tileHeight = 86;  // height of tiles.
+var partsList;	  // array of all moving parts
+var topZ = 2;
+var botZ = 1;
+
+
+/*----------Sliding class-----------*/
+function Sliding(){
+	this.x = 0;   // current position
+	this.y = 0;
+	this.moving = false;	// flag set when movement in progress
+	this.xnew = 0;	  // position it is moving to
+	this.ynew = 0;
+	this.steps = 30;	// number of steps used in animation
+	this.stepsTaken = 0;	// number of steps taken so far
+	this.showflag = true;   // flag for visible/hidden
+	this.loc = 0;
+	this.x = 0;
+	this.y = 0;
+}
+Sliding.prototype.reset = function(loc2){
+	this.loc = loc2;
+	this.resetCoord()
+}
+Sliding.prototype.startAnim = function(dx, dy){
+	this.xnew = this.x + dx;
+	this.ynew = this.y + dy;
+	this.moving = true;
+	this.stepsTaken = 0;
+}
+Sliding.prototype.doStep = function(){
+	if( this.moving ){
+		this.stepsTaken++
+		if( this.stepsTaken == this.steps ){
+			this.x = this.xnew;
+			this.y = this.ynew;
+			this.moving = false;
+		}
+	}
+	return this.moving;
+}
+Sliding.prototype.display = function(){
+	var nx = this.x;
+	var ny = this.y;
+	if( this.moving ){
+		nx += (this.xnew-this.x) * this.stepsTaken/this.steps;
+		ny += (this.ynew-this.y) * this.stepsTaken/this.steps;
+	}
+	placelayer( this.name, nx, ny );
+}
+Sliding.prototype.showhide = function(showflagnew){
+	if( this.showflag != showflagnew ){
+		this.showflag = showflagnew;
+		if( this.showflag ){
+			showlayer( this.name );
+		}else{
+			hidelayer( this.name );
+		}
+	}
+}
+/*----------End of Sliding class-----------*/
+
+//Pieces:
+//  0 1 2 3 4 5 6
+//
+
+/*----------Piece class-----------*/
+function Piece( num ){
+	this.name = "pc"+num;
+	this.number = num;
+}
+Piece.prototype = new Sliding();
+Piece.prototype.constructor = Piece;
+Piece.prototype.resetCoord = function(){
+	var loc = this.loc;
+	this.x = offsetx + tileWidth* loc;
+	this.y = offsety;
+}
+Piece.prototype.showMove = function(m){
+	this.doMove(m);
+	if( m==0 ){  // Move piece from middle to left.
+		if( this.loc == 0 ) {
+			this.startAnim( -3*tileWidth, 0 );
+			setZindex( this.name, topZ );
+		} else if( this.loc<=3 ) {
+			this.startAnim( tileWidth, 0 );
+			setZindex( this.name, botZ );
+		}
+	}else if( m==1 ){  // Move piece from middle to right
+		if( this.loc == 6 ) {
+			this.startAnim( 3*tileWidth, 0 );
+			setZindex( this.name, topZ );
+		} else if( this.loc>=3 ) {
+			this.startAnim( -tileWidth, 0 );
+			setZindex( this.name, botZ );
+		}
+	}
+}
+Piece.prototype.doMove = function(m){
+	if( m==0 ){  // Move piece from middle to left.
+		if( this.loc == 3 ) this.loc = 0;
+		else if( this.loc<3 ) this.loc++;
+	}else if( m==1 ){  // Move piece from middle to right
+		if( this.loc == 3 ) this.loc = 6;
+		else if( this.loc>3 ) this.loc--;
+	}
+}
+/*----------End of Piece class-----------*/
+
+// initialise list of parts
+partsList = new Array();	// array of all moving parts
+for( var i=0; i<7; i++ )
+	partsList[i] = new Piece(i);
+
+
+
+function displaybut(){
+	if(mode==2) changeimage("buttons","edit", pics[1].src);
+	else		changeimage("buttons","edit", pics[0].src);
+	if(mode>=3) changeimage("buttons","solve",pics[3].src);
+	else		changeimage("buttons","solve",pics[2].src);
+	if(mode==4) changeimage("buttons","play", pics[5].src);
+	else		changeimage("buttons","play", pics[4].src);
+	//changeimage("buttons","mode", pics[6+level].src);
+}
+
+function displayall(){
+	for(var i=0;i<partsList.length; i++){
+		partsList[i].showhide( mode!=2 || i<edt );
+		partsList[i].display();
+	}
+	displaybut();
+}
+
+function resetPuzzle(){
+	if( mode == 4 ){
+		mode=3;
+		displaybut();
+		return;
+	}else if( !locked ){
+		for( var i=0; i<partsList.length; i++ ){
+			partsList[i].reset( i );
+		}
+		mode=0;
+		displayall();
+	}
+}
+
+function mix(){
+	if( mode == 4 ){
+		mode=3;
+		displaybut();
+		return;
+	}else if( !locked ){
+		// choose random tile order
+		var temp = new Array( 0,1,2,3,4,5,6 );
+		for(var i=6;i>0;i--){ // index of next location to randomly fill
+			var d=Math.floor(Math.random()*(i+1));  // choose a random location to its left (or itself)
+			if( i!=d ){
+				var c=temp[i];temp[i]=temp[d];temp[d]=c;	// fill location by swapping
+			}
+		}
+
+		// set piece locations
+		for( var i=0; i<partsList.length; i++){
+			partsList[i].reset( temp[i] )
+		}
+
+		mode= solved() ? 0 : 1;
+		displayall();
+	}
+}
+
+function moveabit(){
+	//move pieces a bit
+	if( locked ){
+		var mv = false;
+		for( var i=0; i<partsList.length; i++ ){
+			mv |= partsList[i].doStep();
+			partsList[i].display();
+		}
+		if( mv ){
+			setTimeout("moveabit()",1);
+		}else if( mode>=3 ){
+			playstepcontinue(false);
+		}else{
+			locked=false;
+			checksolved();
+		}
+	}
+}
+
+// do move without animation
+function applyMove(m){
+	for( var i=0; i<partsList.length; i++ ){
+		partsList[i].doMove(m);
+		partsList[i].resetCoord();
+	}
+	return true;
+}
+
+// do move with animation
+function executeMove(m){
+	for( var i=0; i<partsList.length; i++ ){
+		partsList[i].showMove(m);
+	}
+	locked = true;
+	moveabit();
+	return true;
+}
+
+function checksolved(){
+	if( mode == 1 && solved() ){
+		alert("You have solved it!");
+		mode = 0;
+		displaybut();
+	}
+}
+function left(){
+	if( !locked && mode!=2 ) {
+		if( mode==3 ) { seq.length=0; mode=0; displaybut(); }
+		executeMove(0);
+	}
+}
+function right(){
+	if( !locked && mode!=2 ) {
+		if( mode==3 ) { seq.length=0; mode=0; displaybut(); }
+		executeMove(1);
+	}
+}
+
+function keypress(e)
+{
+   if(!e) e = window.event;
+   var key = e.charCode;
+   var key2 = e.keyCode;
+
+   if	 ( key2== 37			   ){ left();		return false; }  // left arrow
+   else if( key2== 39			   ){ right();	   return false; }  // right arrow
+   else if( key == 69 || key == 101 ){ doedit();	  return false; }  // e
+   else if( key == 72 || key == 104 ){ help();		return false; }  // h
+   else if( key == 76 || key == 108 ){ setlevel();	return false; }  // l
+   else if( key == 77 || key == 109 ){ mix();		 return false; }  // m
+   else if( key == 80 || key == 112 ){ solplay();	 return false; }  // p
+   else if( key == 82 || key == 114 ){ resetPuzzle(); return false; }  // r
+   else if( key == 83 || key == 115 ){ solve(3);	  return false; }  // s
+   else if( key >= 49 && key <= 55 && mode==2 ){ placepiece( key-49 ); return false; }
+   return true;
+}
+
+function placepiece( f ){
+	// check that it has not been used yet
+	for( var i=0; i<edt; i++){
+		if( partsList[i].loc == f ) return;
+	}
+	// place next piece at location
+	partsList[edt].reset( f );
+	partsList[edt].showhide( true );
+	partsList[edt].display();
+	edt++;
+	if( edt>=7 ){
+		mode = solved()? 1 : 0;
+		displaybut();
+	}
+}
+
+function mouseclick(e){
+	var x,y;
+	if(netscape||mozilla){
+		x=e.pageX;
+		y=e.pageY;
+	}else{
+		x=window.event.clientX-2;
+		y=window.event.clientY-2;
+	}
+	x -= offsetx;
+	y -= offsety;
+	if( mode==2 ){
+		if( y>= 0 && y <= tileHeight // main row
+			&& x>=0 && x<7*tileWidth-1 ){
+
+			// get the location
+			var f = Math.floor(x/tileWidth);
+			placepiece(f);
+		}
+	}else if( !locked ){
+		if( y>= 0 && y <= tileHeight // main row
+			&& x>=0 && x<7*tileWidth-1 ){
+
+			if( x <= 7*tileWidth/2 ) left();
+			else					 right();
+		}
+	}
+	return;
+}
+
+function doedit(){
+	if( mode == 4 ){
+		mode=3;
+		displaybut();
+		return;
+	}else if( !locked ){
+		if( mode<2 ){
+			mode=2;
+			edt = 0;
+			displayall();
+		}
+	}
+}
+
+function signoff(){
+	hidelayer("wait");
+}
+function signon(){
+	showlayer("wait");
+}
+
+
+function solved(){
+	for( var i=0; i<7; i++ ){
+		if( partsList[i].loc != i ) return false;
+	}
+	return true;
+}
+
+function help(){
+
+	alert(
+		"The New Seven puzzle\n\n"+
+		"The aim is to arrange the tiles in order.\n"+
+		"\nControls:\n"+
+		"(M) Mix:	  This button randomly mixes the puzzle up.\n"+
+		"(R) Reset:  Resets the puzzle to the initial position.\n"+
+		"(E) Edit:	 Allows you to set up any position. In edit mode,\n"+
+		"			all the tiles are cleared, and then you can\n"+
+		"			click where each piece belongs in order.\n"+
+		"(S) Solve:  This solves the puzzle, performing only one step\n"+
+		"			each time the button is pressed.\n"+
+		"(P) Play:   This solves the puzzle, playing back the whole\n"+
+		"			solution until it is solved. Press the button\n"+
+		"			again to pause.\n"+
+		"(H) Help:	Shows this help screen.\n"
+	);
+}
+
+
+
+
+
+
+
+
+// Calculate transition table
+// permmv[move][position] = new position
+var permmv=new Array();
+function calctrans(){
+	//transition table
+	for(var m=0;m<2;m++){
+		var prm = new Array();
+		for(var p=0;p<5040;p++){
+			prm[p]=getprmmv(p,m);
+		}
+		permmv[m]=prm;
+	}
+}
+
+// Given index of position and a move number, return resulting position's index.
+function getprmmv(p,m){
+	//convert number into array;
+	var ps=new Array()
+	var q=p;
+	for( var a=1;a<=7;a++){
+		var b=q%a;
+		q=(q-b)/a;
+		for(var c=a-1;c>=b;c--) ps[c+1]=ps[c];
+		ps[b]=7-a;
+	}
+
+
+	//perform move on array
+	if( m==0 ){
+		var c = ps[3];
+		ps[3]=ps[2];
+		ps[2]=ps[1];
+		ps[1]=ps[0];
+		ps[0]=c;
+	}else if( m==1 ){
+		var c = ps[3];
+		ps[3]=ps[4];
+		ps[4]=ps[5];
+		ps[5]=ps[6];
+		ps[6]=c;
+	}
+
+	//convert array back to number
+	q=0;
+	for(var a=0;a<7;a++){
+		var b=0;
+		for( var c=0;c<7;c++){
+			if(ps[c]==a)break;
+			if(ps[c]>a)b++;
+		}
+		q=q*(7-a)+b;
+	}
+	return(q)
+}
+
+
+
+// perm[position] = distance from solved
+var perm=new Array();
+
+// calculate pruning table.
+function calcprun(){
+	// clear pruning table
+	for(var p=0;p<5040;p++) perm[p]=-1;
+
+	// set solved position
+	perm[0]=0;
+
+	// build pruning table
+	var n=1;
+	//var s="";
+	for(var l=0;n>0;l++){
+		//s+=n+" ";
+		n=0;
+		for(var p=0;p<5040;p++){
+			if(perm[p]==l){
+				for(var m=0;m<2;m++){
+					var q = permmv[m][permmv[m][permmv[m][p]]];
+					if( perm[q]==-1 ) { perm[q]=l+1; n++; }
+				}
+			}
+		}
+	}
+	//alert(s);
+}
+
+var seq= new Array();
+
+// Do A* search for solution.
+function solSearch( pos, depth, remaining, lastmove, repeats ){
+	// prune if cannot be solved in time
+	if( perm[pos] > remaining ) return false;
+
+	// if solved, return solution
+	if( remaining==0 ){
+		return true;
+	}
+
+	// try each possible move
+	for( var m=0; m<2; m++ ){
+		if( m!=lastmove || repeats<3 ){
+			var pos2 = permmv[m][pos];
+			seq[depth] = m;
+			if( solSearch( pos2, depth+1, remaining-1, m, m==lastmove ? repeats+1 : 1 ) ) return true;
+		}
+	}
+}
+
+
+// Calculate solution for a position given as an index, using IDA*
+function solCalc( pos ){
+	var maxdp = -1;
+	do{
+		seq.length = 0;
+		maxdp++;
+	}while( !solSearch( pos, 0, maxdp, -1, 1 ) );
+}
+
+// Calculate solution for current position, using IDA*
+function solGetPos(){
+	var ps = new Array();
+	// get locations of each piece as if they were in a row 0...8-level.
+	for( var pc = 0; pc < 7; pc++ ){
+		ps[ partsList[pc].loc ] = pc;
+	}
+
+	//convert array to index
+	var q=0;
+	for(var a=0;a<7;a++){
+		var b=0;
+		for( var c=0;c<7;c++){
+			if(ps[c]==a)break;
+			if(ps[c]>a)b++;
+		}
+		q=q*(7-a)+b;
+	}
+
+	return q;
+}
+
+
+
+
+
+
+//Play back solution
+var soltimer;
+function solplay(){
+	if(mode==4){
+		// stop the play in progress
+		mode=3;
+		displaybut();
+	}else if( mode!=2 && !locked ){
+		// start play
+		solve(4);
+	}
+}
+
+var seq = new Array();
+function solve(newmode){
+	if( locked || mode == 2 ) return;
+	if( mode<2 ){
+		//no solution set up yet. Construct it!
+		var pos = solGetPos();
+		solCalc( pos );
+		//alert( seq);
+	}
+	mode = newmode;
+	displaybut();
+	locked = true;
+	playstepcontinue(true)
+}
+
+function playstepcontinue( first ){
+	if( seq.length == 0 || mode<3 ){
+		mode=0;
+		locked = false;
+		displaybut();
+	} else if( first || mode>3 ){
+		locked = true;
+		var m = seq[0];
+		// pop move from list
+		for(var i=1;i<seq.length;i++) seq[i-1]=seq[i];
+		seq.length--;
+		// do move
+		if( mode==3 ) executeMove(m);
+		else soltimer=setTimeout("executeMove("+m+");", first ? 1 : 300);
+	}else{
+		locked = false;
+		displaybut();
+	}
+}
+
+
+
+
+
+function initialise(){
+	resetPuzzle();
+	displayall();
+	calctrans();
+	calcprun();
+	signoff();
+}
+
+function getStyle(){
+	var s = '<STYLE TYPE="text/css">\n';
+	for( var i=0; i<7; i++ )
+		s += "#pc"+i+"{position:absolute;  left:0;  top:0; width:1;}\n"
+
+	s+= "#back{position:absolute; left:"+(offsetx-14)+";   top:"+(offsety-11)+";  width:1;}\n"+
+		"#wait{position:absolute; left:"+(offsetx+( 7*tileWidth -200 )/2 )+";   top:"+(offsety+20)+";  width:200;}\n"+
+		"#buttons{position:absolute; left:"+(offsetx+( 7*tileWidth -196 )/2 )+"; top:"+(offsety+130)+"; width:196;}\n"+
+		"<\/STYLE>";
+	return s;
+}
+document.write( getStyle() );
+
+//-->
+</script>
+
+</head>
+<body background="images/backgrnd/cubeback.gif" onload="initialise();">
+
+<div id=back><img src='images/newseven/back.gif' width=552 height=130 border=0 alt=""></div>
+<div id=pc0><img  src='images/newseven/tile1.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=pc1><img  src='images/newseven/tile2.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=pc2><img  src='images/newseven/tile3.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=pc3><img  src='images/newseven/tile4.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=pc4><img  src='images/newseven/tile5.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=pc5><img  src='images/newseven/tile6.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=pc6><img  src='images/newseven/tile7.gif'  width=74 height=87 border=0 alt=""></div>
+<div id=wait><center><table><tr><td bgcolor=white><big><big>Please wait....</big></big></td></tr></table></center></div>
+
+<div id=buttons align=center>
+<table cellpadding=0 cellspacing=0 align=center>
+<tr><td align=center><a href="javascript:mix();"><img src='images/buttons/mix.gif'  alt=""width=48 height=16 border=0></a><a href="javascript:resetPuzzle();"><img src='images/buttons/reset.gif' width=48 height=16 border=0 alt=""></a><a href="javascript:doedit();"><img src='images/buttons/edit.gif' width=48 height=16 border=0 name=edit alt=""></a><a href="javascript:help();"><img src='images/buttons/help.gif' width=48 height=16 border=0 alt=""></a></td></tr>
+<tr><td align=center><a href="javascript:solve(3);"><img src='images/buttons/solve.gif'  alt=""width=48 height=16 border=0 name=solve></a><a href="javascript:solplay();"><img src='images/buttons/play.gif' width=48 height=16 border=0 name=play alt=""></a></td></tr>
+</table>
+</div>
+
+</body>
+</html>
